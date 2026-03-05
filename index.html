@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Camisetas Sorpresa</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #080d18; color: #e2e8f0; font-family: 'DM Sans', sans-serif; }
+    input::placeholder { color: #334155; }
+    input:focus, select:focus { outline: none; border-color: #f59e0b !important; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+    @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } } to { opacity:1; transform:translateY(0) } }
+    @keyframes shimmer { 0% { background-position:-400px 0 } 100% { background-position:400px 0 } }
+    @keyframes glow { 0%,100% { box-shadow:0 0 24px #f59e0b44 } 50% { box-shadow:0 0 48px #f59e0b99 } }
+    @keyframes modalIn { from { opacity:0; transform:scale(.95) } to { opacity:1; transform:scale(1) } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    const SHEET_ID   = "1w_XQPu6s0fqM-0oajm6nqO_Qe6bdFBkQQaVk_UCnHdU";
+    const SHEET_NAME = "BBDD GENERAL";
+    const CLIENT_ID  = "1002178090025-gj5qqv7kdtorhb8mlbq5b75m4cf0dbr0.apps.googleusercontent.com";
+    const SCOPES     = "https://www.googleapis.com/auth/spreadsheets";
+
+    // Columnas (índice 0-based)
+    // A=0  B=1       C=2  D=3     E=4   F=5  G=6     H=7    I=8  J=9   K=10  L=11   N=13  O=14      P=15          R=17       T=19
+    // FECHA CATEGORIA UDs EQUIPO  TEMP  EQ   COLORES TALLA  REF  CAJA  LIGA  MARCA  PVP   VENDIDA   FECHA_VENTA   Nº_PEDIDO  VENDEDOR
+    const COL = {
+      FECHA:       0,
+      CATEGORIA:   1,
+      UDs:         2,
+      EQUIPO:      3,
+      TEMP:        4,
+      EQ:          5,
+      COLORES:     6,
+      TALLA:       7,
+      REF:         8,
+      CAJA:        9,
+      LIGA:        10,
+      MARCA:       11,
+      PRECIO_VENTA: 13,
+      VENDIDA:      14,
+      FECHA_VENTA: 15,
+      NUM_PEDIDO:  17,
+      VENDEDOR:    19,
+      ESCUDO:      21,
+    };
+
+    const VENDEDORES = ["JUAN","HECTOR","CESAR","ERIC"];
+    const TALLAS_ADULTO = ["S","M","L","XL","XXL","3XL","4XL"];
+    const TALLAS_NINO   = ["116","128","140","152","164"];
+    const TALLAS        = [...TALLAS_ADULTO,...TALLAS_NINO];
+    const FAKE = ["Porto","Utrecht","Ferencvaros","Barcelona","Madrid","City","Bayern","Juve","PSG","Milan","Ajax","Arsenal","Liverpool","Atleti"];
+
+    const CAJA_COLORS = ["#60a5fa","#4ade80","#f59e0b","#fb923c","#a78bfa","#34d399","#f472b6","#38bdf8","#e879f9","#fde68a","#94a3b8","#ff6b6b","#ffd93d","#6bcb77","#4d96ff"];
+    const getCajaColor = (caja, allCajas) => CAJA_COLORS[allCajas.indexOf(caja) % CAJA_COLORS.length] || "#64748b";
+
+    function formatDate(date) {
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      return `${date.getDate()}-${months[date.getMonth()]}-${date.getFullYear()}`;
+    }
+
+    function loadScript(src) {
+      return new Promise(resolve => {
+        if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+        const s = document.createElement("script");
+        s.src = src; s.onload = resolve; document.head.appendChild(s);
+      });
+    }
+
+    // ── ESCUDOS desde columna V de Google Sheets ──
+    function Escudo({ url, equipo, size=40 }) {
+      if (!url) return <div style={{ width:size, height:size, flexShrink:0 }}/>;
+      return (
+        <img src={url} alt={equipo}
+          style={{ width:size, height:size, objectFit:"contain", flexShrink:0 }}
+          onError={e => e.currentTarget.style.display="none"}/>
+      );
+    }
+
+    const ShirtSVG = ({ color="#fff", size=56 }) => (
+      <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
+        <path d="M30 8 L8 30 L24 37 L24 92 L76 92 L76 37 L92 30 L70 8 C64 22 56 28 50 28 C44 28 36 22 30 8Z"
+          fill={color} stroke="rgba(255,255,255,0.18)" strokeWidth="2"/>
+      </svg>
+    );
+
+    function SlotText({ spinning, value }) {
+      const [display, setDisplay] = useState("· · ·");
+      useEffect(() => {
+        if (!spinning) { setDisplay(value || "· · ·"); return; }
+        let i = 0;
+        const iv = setInterval(() => setDisplay(FAKE[i++ % FAKE.length]), 75);
+        return () => clearInterval(iv);
+      }, [spinning, value]);
+      return (
+        <span style={{ fontFamily:"'Bebas Neue',Impact,sans-serif", fontSize:"clamp(1.8rem,4vw,3rem)", letterSpacing:"0.06em", color:spinning?"#fbbf24":"#f8fafc", transition:"color .4s", display:"block", textAlign:"center" }}>
+          {display}
+        </span>
+      );
+    }
+
+    const Badge = ({ txt, color="#4ade80" }) => txt ? (
+      <span style={{ background:`${color}22`, border:`1px solid ${color}55`, color, borderRadius:6, padding:"2px 8px", fontSize:"0.66rem", fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase", whiteSpace:"nowrap" }}>
+        {txt}
+      </span>
+    ) : null;
+
+    // ── MODAL DE CONFIRMACIÓN ──
+    function ConfirmModal({ shirt, allCajas, onConfirm, onCancel, saving }) {
+      const [numPedido,    setNumPedido]    = useState("");
+      const [vendedor,     setVendedor]     = useState("");
+      const [precioVenta,  setPrecioVenta]  = useState("");
+      const [error,     setError]     = useState("");
+
+      const handleConfirm = () => {
+        if (!precioVenta.trim() || isNaN(precioVenta.replace(',','.'))) { setError("Introduce el precio de venta."); return; }
+        if (!numPedido.trim()) { setError("Introduce el número de pedido."); return; }
+        if (!vendedor)         { setError("Selecciona el vendedor."); return; }
+        setError("");
+        onConfirm(parseFloat(precioVenta.trim().replace(',','.')), numPedido.trim(), vendedor);
+      };
+
+      return (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.75)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:999, padding:20 }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:20, padding:"32px 28px", maxWidth:460, width:"100%", animation:"modalIn .25s ease" }}>
+
+            <div style={{ textAlign:"center", marginBottom:24 }}>
+              <ShirtSVG color={getCajaColor(shirt.categoria, allCajas)} size={48}/>
+              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.6rem", color:"#f8fafc", marginTop:8 }}>{shirt.equipo}</div>
+              <div style={{ display:"flex", gap:6, justifyContent:"center", flexWrap:"wrap", marginTop:8 }}>
+                <Badge txt={shirt.talla} color="#60a5fa"/>
+                <Badge txt={shirt.categoria} color={getCajaColor(shirt.categoria, allCajas)}/>
+                <Badge txt={shirt.temp} color="#94a3b8"/>
+                <Badge txt={shirt.marca} color="#34d399"/>
+              </div>
+            </div>
+
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+
+              {/* Precio de venta */}
+              <div>
+                <label style={{ fontSize:"0.72rem", fontWeight:600, letterSpacing:"0.15em", textTransform:"uppercase", color:"#f59e0b", display:"block", marginBottom:6 }}>
+                  Precio de Venta (€)
+                </label>
+                <div style={{ position:"relative" }}>
+                  <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:"#64748b", fontSize:"1rem" }}>€</span>
+                  <input
+                    value={precioVenta}
+                    onChange={e => setPrecioVenta(e.target.value)}
+                    placeholder="Ej: 29.99"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    style={{ width:"100%", padding:"11px 14px 11px 28px", background:"#080d18", border:"2px solid #1e293b", borderRadius:10, color:"#e2e8f0", fontSize:"0.95rem", fontFamily:"'DM Sans',sans-serif" }}
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Nº Pedido */}
+              <div>
+                <label style={{ fontSize:"0.72rem", fontWeight:600, letterSpacing:"0.15em", textTransform:"uppercase", color:"#f59e0b", display:"block", marginBottom:6 }}>
+                  Nº de Pedido del Cliente
+                </label>
+                <input
+                  value={numPedido}
+                  onChange={e => setNumPedido(e.target.value)}
+                  onKeyDown={e => e.key==="Enter" && handleConfirm()}
+                  placeholder="Ej: CFS52412"
+                  style={{ width:"100%", padding:"11px 14px", background:"#080d18", border:"2px solid #1e293b", borderRadius:10, color:"#e2e8f0", fontSize:"0.95rem", fontFamily:"'DM Sans',sans-serif" }}
+                  autoFocus
+                />
+              </div>
+
+              {/* Vendedor */}
+              <div>
+                <label style={{ fontSize:"0.72rem", fontWeight:600, letterSpacing:"0.15em", textTransform:"uppercase", color:"#f59e0b", display:"block", marginBottom:6 }}>
+                  Vendedor
+                </label>
+                <div style={{ display:"flex", gap:8 }}>
+                  {VENDEDORES.map(v => (
+                    <button key={v} onClick={() => setVendedor(v)} style={{ flex:1, padding:"10px 0", borderRadius:10, border:`2px solid ${vendedor===v?"#4ade80":"#1e293b"}`, background:vendedor===v?"#4ade8014":"#080d18", cursor:"pointer", fontFamily:"'Bebas Neue',sans-serif", fontSize:"1rem", letterSpacing:"0.08em", color:vendedor===v?"#4ade80":"#64748b", transition:"all .15s" }}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Fecha (solo informativa) */}
+              <div style={{ background:"#080d18", border:"1px solid #1e293b", borderRadius:10, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:"0.72rem", color:"#475569", textTransform:"uppercase", letterSpacing:"0.1em" }}>Fecha de venta</span>
+                <span style={{ fontSize:"0.9rem", color:"#94a3b8", fontWeight:600 }}>{formatDate(new Date())}</span>
+              </div>
+
+              {error && <div style={{ background:"#f8711818", border:"1px solid #f8711850", borderRadius:8, padding:"10px 14px", color:"#f87178", fontSize:"0.84rem" }}>⚠️ {error}</div>}
+
+              <div style={{ display:"flex", gap:10, marginTop:4 }}>
+                <button onClick={onCancel} style={{ flex:1, padding:"12px", background:"transparent", border:"2px solid #1e293b", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:"0.9rem", color:"#64748b" }}>
+                  Cancelar
+                </button>
+                <button onClick={handleConfirm} disabled={saving} style={{ flex:2, padding:"12px", background:saving?"#1e293b":"linear-gradient(135deg,#4ade80,#22c55e)", border:"none", borderRadius:10, cursor:saving?"not-allowed":"pointer", fontWeight:700, fontSize:"0.95rem", color:saving?"#64748b":"#080d18" }}>
+                  {saving ? "⏳ Guardando..." : "✅ Confirmar venta"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── CHART COMPONENTS ──
+    function BarChart({ labels, data, colors, title }) {
+      const ref = useRef(null);
+      useEffect(() => {
+        if (!ref.current) return;
+        const existing = Chart.getChart(ref.current);
+        if (existing) existing.destroy();
+        new Chart(ref.current, {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [{ data, backgroundColor: (colors && colors.length) ? colors : labels.map((_,i) => `hsl(${i*37},70%,55%)`), borderRadius: 6, borderSkipped: false }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} uds` } } },
+            scales: {
+              x: { grid: { color: "#1e293b" }, ticks: { color: "#64748b", font: { size: 11 } } },
+              y: { grid: { color: "#1e293b" }, ticks: { color: "#64748b", stepSize: 1 }, beginAtZero: true }
+            }
+          }
+        });
+      }, [labels, data]);
+      return <canvas ref={ref} style={{ width:"100%", height:"100%" }}/>;
+    }
+
+    function LineChart({ labels, data, title }) {
+      const ref = useRef(null);
+      useEffect(() => {
+        if (!ref.current) return;
+        const existing = Chart.getChart(ref.current);
+        if (existing) existing.destroy();
+        new Chart(ref.current, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              data, fill: true,
+              backgroundColor: "rgba(245,158,11,0.1)",
+              borderColor: "#f59e0b", borderWidth: 2,
+              pointBackgroundColor: "#f59e0b", pointRadius: 4, tension: 0.3
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} ventas` } } },
+            scales: {
+              x: { grid: { color: "#1e293b" }, ticks: { color: "#64748b", font: { size: 11 }, maxRotation: 45 } },
+              y: { grid: { color: "#1e293b" }, ticks: { color: "#64748b", stepSize: 1 }, beginAtZero: true }
+            }
+          }
+        });
+      }, [labels, data]);
+      return <canvas ref={ref} style={{ width:"100%", height:"100%" }}/>;
+    }
+
+    const StatCard = ({ icon, label, value, color="#f59e0b" }) => (
+      <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:14, padding:"20px 24px", display:"flex", alignItems:"center", gap:16 }}>
+        <div style={{ fontSize:"2rem" }}>{icon}</div>
+        <div>
+          <div style={{ fontSize:"0.65rem", color:"#475569", textTransform:"uppercase", letterSpacing:"0.15em", marginBottom:4 }}>{label}</div>
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"2rem", color, letterSpacing:"0.05em" }}>{value}</div>
+        </div>
+      </div>
+    );
+
+    const ChartBox = ({ title, height=260, children }) => (
+      <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:14, padding:"20px 24px" }}>
+        <div style={{ fontSize:"0.7rem", fontWeight:600, letterSpacing:"0.15em", textTransform:"uppercase", color:"#f59e0b", marginBottom:16 }}>{title}</div>
+        <div style={{ height }}>{children}</div>
+      </div>
+    );
+
+    // ── STATS TAB COMPONENT ──
+    function StatsTab({ shirts, allCajas }) {
+      const [periodo,    setPeriodo]    = useState("todo");
+      const [fechaDesde, setFechaDesde] = useState("");
+      const [fechaHasta, setFechaHasta] = useState("");
+
+      const parseDate = str => {
+        if (!str) return null;
+        const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+        // "4-Mar-2026"
+        const m1 = str.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+        if (m1) { const d=parseInt(m1[1]),mo=months[m1[2]],y=parseInt(m1[3]); if(!isNaN(d)&&mo!==undefined&&!isNaN(y)) return new Date(y,mo,d); }
+        // "04/02/2026"
+        const m2 = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (m2) return new Date(parseInt(m2[3]),parseInt(m2[2])-1,parseInt(m2[1]));
+        // "2026-02-04" ISO
+        const m3 = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m3) return new Date(parseInt(m3[1]),parseInt(m3[2])-1,parseInt(m3[3]));
+        // "04-02-2026"
+        const m4 = str.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+        if (m4) return new Date(parseInt(m4[3]),parseInt(m4[2])-1,parseInt(m4[1]));
+        return null;
+      };
+
+      const now = new Date();
+      const periodos = [
+        { id:"todo",   label:"Todo" },
+        { id:"7d",     label:"7 días" },
+        { id:"1m",     label:"1 mes" },
+        { id:"3m",     label:"3 meses" },
+        { id:"1y",     label:"1 año" },
+        { id:"custom", label:"Personalizado" },
+      ];
+
+      const vendidas = shirts.filter(s => s.vendida);
+
+      const ventasFiltradas = vendidas.filter(s => {
+        if (periodo === "todo") return true;
+        const fecha = parseDate(s.fechaVenta);
+        if (!fecha) return false;
+        if (periodo === "custom") {
+          const desde = fechaDesde ? new Date(fechaDesde) : null;
+          const hasta = fechaHasta ? new Date(fechaHasta + "T23:59:59") : null;
+          if (desde && fecha < desde) return false;
+          if (hasta && fecha > hasta) return false;
+          return true;
+        }
+        const dias = { "7d":7, "1m":30, "3m":90, "1y":365 }[periodo];
+        const desde = new Date(now); desde.setDate(desde.getDate() - dias);
+        return fecha >= desde;
+      });
+
+      const tallasMap = {};
+      ventasFiltradas.forEach(s => { tallasMap[s.talla] = (tallasMap[s.talla]||0) + 1; });
+      const tallasOrden  = Object.entries(tallasMap).sort((a,b) => b[1]-a[1]);
+      const tallasLabels = tallasOrden.map(([t]) => t);
+      const tallasData   = tallasOrden.map(([,v]) => v);
+
+      const cajasMap = {};
+      ventasFiltradas.forEach(s => { cajasMap[s.categoria] = (cajasMap[s.categoria]||0) + 1; });
+      const cajasOrden  = Object.entries(cajasMap).sort((a,b) => b[1]-a[1]);
+      const cajasLabels = cajasOrden.map(([c]) => c);
+      const cajasData   = cajasOrden.map(([,v]) => v);
+      const cajasColors = cajasLabels.map(c => getCajaColor(c, allCajas));
+
+      const fechaMap = {};
+      ventasFiltradas.forEach(s => { if(s.fechaVenta) fechaMap[s.fechaVenta] = (fechaMap[s.fechaVenta]||0) + 1; });
+      const fechasOrden  = Object.entries(fechaMap).sort((a,b) => { const da=parseDate(a[0]), db=parseDate(b[0]); return da&&db ? da-db : 0; });
+      const fechasLabels = fechasOrden.map(([f]) => f);
+      const fechasData   = fechasOrden.map(([,v]) => v);
+
+      const totalVend     = ventasFiltradas.length;
+      const parsePrice = str => {
+        if (!str) return 0;
+        const clean = String(str).replace(/[^0-9.,]/g,'').replace(',','.');
+        const v = parseFloat(clean);
+        return isNaN(v) ? 0 : v;
+      };
+      const totalIngresos = ventasFiltradas.reduce((acc,s) => acc + parsePrice(s.pvp), 0);
+
+      const empty = <div style={{ color:'#334155', textAlign:'center', paddingTop:80, fontSize:'0.85rem' }}>Sin datos en este período</div>;
+
+      return (
+        <div style={{ maxWidth:1100, margin:"0 auto", padding:"32px 24px", animation:"fadeUp .35s ease" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:14, padding:"16px 20px", marginBottom:24 }}>
+            <div style={{ fontSize:"0.65rem", fontWeight:600, letterSpacing:"0.18em", textTransform:"uppercase", color:"#f59e0b", marginBottom:12 }}>Período</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {periodos.map(p => (
+                <button key={p.id} onClick={() => setPeriodo(p.id)}
+                  style={{ padding:"7px 16px", borderRadius:8, border:"none", cursor:"pointer", fontWeight:600, fontSize:"0.8rem", background:periodo===p.id?"#f59e0b":"#1e293b", color:periodo===p.id?"#080d18":"#64748b", transition:"all .2s" }}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {periodo === "custom" && (
+              <div style={{ display:"flex", gap:12, marginTop:14, flexWrap:"wrap", alignItems:"center" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:"0.72rem", color:"#64748b" }}>Desde</span>
+                  <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+                    style={{ padding:"7px 10px", background:"#080d18", border:"2px solid #1e293b", borderRadius:8, color:"#e2e8f0", fontSize:"0.82rem" }}/>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:"0.72rem", color:"#64748b" }}>Hasta</span>
+                  <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+                    style={{ padding:"7px 10px", background:"#080d18", border:"2px solid #1e293b", borderRadius:8, color:"#e2e8f0", fontSize:"0.82rem" }}/>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12, marginBottom:24 }}>
+            <StatCard icon="✅" label="Vendidas" value={totalVend} color="#4ade80"/>
+            <StatCard icon="💰" label="Ingresos" value={"€"+totalIngresos.toFixed(2)} color="#f59e0b"/>
+            <StatCard icon="📦" label="Stock restante" value={shirts.filter(s=>!s.vendida).length} color="#60a5fa"/>
+            <StatCard icon="📊" label="% vendido" value={(shirts.length ? Math.round(shirts.filter(s=>s.vendida).length/shirts.length*100) : 0)+'%'} color="#a78bfa"/>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))", gap:16 }}>
+            <ChartBox title="Tallas mas vendidas">
+              {tallasLabels.length > 0 ? <BarChart key={tallasLabels.join(",")} labels={tallasLabels} data={tallasData}/> : empty}
+            </ChartBox>
+            <ChartBox title="Ventas por tipo de caja">
+              {cajasLabels.length > 0 ? <BarChart key={cajasLabels.join(",")} labels={cajasLabels} data={cajasData} colors={cajasColors}/> : empty}
+            </ChartBox>
+            <ChartBox title="Evolucion de ventas" height={260}>
+              {fechasLabels.length > 0 ? <LineChart key={fechasLabels.join(",")} labels={fechasLabels} data={fechasData}/> : empty}
+            </ChartBox>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [authStatus, setAuthStatus] = useState("idle");
+      const [authError,  setAuthError]  = useState("");
+      const tokenRef = useRef(null);
+
+      const [shirts,       setShirts]       = useState([]);
+      const [loadingSheet, setLoadingSheet] = useState(false);
+      const [sheetError,   setSheetError]   = useState("");
+
+      const [tab,        setTab]        = useState("sorteo");
+      const [caja,       setCaja]       = useState("");
+      const [talla,      setTalla]      = useState("");
+      const [descInput,  setDescInput]  = useState("");
+      const [descartes,  setDescartes]  = useState([]);
+      const [spinning,   setSpinning]   = useState(false);
+      const [result,     setResult]     = useState(null);
+      const [showResult, setShowResult] = useState(false);
+      const [formError,  setFormError]  = useState("");
+      const [saving,     setSaving]     = useState(false);
+      const [showModal,  setShowModal]  = useState(false);
+      const [adminFilter,setAdminFilter]= useState("disponibles");
+      const [adminCaja,  setAdminCaja]  = useState("todas");
+      const [adminTalla, setAdminTalla] = useState("todas");
+
+      const allCajas = [...new Set(shirts.map(s => s.categoria).filter(Boolean))].sort();
+      const total    = shirts.length;
+      const vendidas = shirts.filter(s => s.vendida).length;
+      const disp     = total - vendidas;
+
+      const fetchSheet = useCallback(async () => {
+        setLoadingSheet(true); setSheetError("");
+        try {
+          const res = await window.gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: SHEET_ID, range:`${SHEET_NAME}!A2:V`, valueRenderOption:'UNFORMATTED_VALUE',
+          });
+          setShirts((res.result.values||[]).map((r,i) => ({
+            rowIndex:    i+2,
+            fecha:       r[COL.FECHA]       || "",
+            categoria:   r[COL.CATEGORIA]   || "",
+            equipo:      r[COL.EQUIPO]      || "",
+            temp:        r[COL.TEMP]        || "",
+            eq:          r[COL.EQ]          || "",
+            colores:     r[COL.COLORES]     || "",
+            talla:       r[COL.TALLA]       || "",
+            ref:         r[COL.REF]         || "",
+            caja:        r[COL.CAJA]        || "",
+            liga:        r[COL.LIGA]        || "",
+            marca:       r[COL.MARCA]       || "",
+            pvp:         r[COL.PRECIO_VENTA] || "",
+            vendida:     (r[COL.VENDIDA]||"").toString().toUpperCase() === "SI" ||
+                         (r[COL.VENDIDA]||"").toString().toUpperCase() === "SÍ",
+            fechaVenta:  r[COL.FECHA_VENTA] || "",
+            numPedido:   r[COL.NUM_PEDIDO]  || "",
+            vendedor:    r[COL.VENDEDOR]    || "",
+            escudo:      r[COL.ESCUDO]      || "",
+          })));
+        } catch(e) {
+          const msg = e.result?.error?.message || String(e);
+          if (msg.includes("401") || msg.includes("Invalid") || msg.includes("unauthorized")) {
+            localStorage.removeItem("gtoken");
+            localStorage.removeItem("gtoken_expiry");
+            setAuthStatus("idle");
+          }
+          setSheetError("Error al leer la hoja: " + msg);
+        }
+        finally { setLoadingSheet(false); }
+      }, []);
+
+      // Try restoring session from localStorage on mount
+      useEffect(() => {
+        const token  = localStorage.getItem("gtoken");
+        const expiry = parseInt(localStorage.getItem("gtoken_expiry") || "0");
+        if (!token || Date.now() >= expiry) {
+          // No valid token — show login screen immediately
+          localStorage.removeItem("gtoken");
+          localStorage.removeItem("gtoken_expiry");
+          setAuthStatus("idle");
+          return;
+        }
+        // Valid token found — try to restore silently
+        setAuthStatus("loading");
+        (async () => {
+          try {
+            await Promise.all([loadScript("https://apis.google.com/js/api.js"), loadScript("https://accounts.google.com/gsi/client")]);
+            await new Promise((res,rej) => window.gapi.load("client",{callback:res,onerror:rej}));
+            await window.gapi.client.init({ discoveryDocs:["https://sheets.googleapis.com/$discovery/rest?version=v4"] });
+            window.gapi.client.setToken({ access_token: token });
+            setAuthStatus("ok");
+            fetchSheet();
+          } catch(e) {
+            localStorage.removeItem("gtoken");
+            localStorage.removeItem("gtoken_expiry");
+            setAuthStatus("idle");
+          }
+        })();
+      }, []);
+
+      const initAuth = useCallback(async () => {
+        setAuthStatus("loading"); setAuthError("");
+        try {
+          await Promise.all([loadScript("https://apis.google.com/js/api.js"), loadScript("https://accounts.google.com/gsi/client")]);
+          await new Promise((res,rej) => window.gapi.load("client",{callback:res,onerror:rej}));
+          await window.gapi.client.init({ discoveryDocs:["https://sheets.googleapis.com/$discovery/rest?version=v4"] });
+          tokenRef.current = window.google.accounts.oauth2.initTokenClient({
+            client_id: CLIENT_ID, scope: SCOPES,
+            callback: resp => {
+              if (resp.error) { setAuthError(resp.error); setAuthStatus("error"); return; }
+              const expiry = Date.now() + (resp.expires_in - 60) * 1000;
+              localStorage.setItem("gtoken", resp.access_token);
+              localStorage.setItem("gtoken_expiry", expiry);
+              setAuthStatus("ok"); fetchSheet();
+            },
+          });
+          // Use prompt:"" to skip consent screen if already authorized
+          tokenRef.current.requestAccessToken({ prompt:"" });
+        } catch(e) { setAuthError(String(e?.message||e)); setAuthStatus("error"); }
+      }, []);
+
+      const markSold = useCallback(async (shirt, precioVenta, numPedido, vendedor) => {
+        setSaving(true);
+        try {
+          const fechaVenta = formatDate(new Date());
+          // Escribimos O (VENDIDA), P (FECHA_VENTA), R (NUM_PEDIDO), T (VENDEDOR)
+          // Usamos batchUpdate para escribir celdas no contiguas
+          await window.gapi.client.sheets.spreadsheets.values.batchUpdate({
+            spreadsheetId: SHEET_ID,
+            resource: {
+              valueInputOption: "RAW",
+              data: [
+                { range:`${SHEET_NAME}!N${shirt.rowIndex}`, values:[[precioVenta]] },
+                { range:`${SHEET_NAME}!O${shirt.rowIndex}`, values:[["SI"]] },
+                { range:`${SHEET_NAME}!P${shirt.rowIndex}`, values:[[fechaVenta]] },
+                { range:`${SHEET_NAME}!R${shirt.rowIndex}`, values:[[numPedido]] },
+                { range:`${SHEET_NAME}!T${shirt.rowIndex}`, values:[[vendedor]] },
+              ]
+            }
+          });
+          setShirts(prev => prev.map(s => s.rowIndex===shirt.rowIndex
+            ? {...s, vendida:true, pvp:precioVenta, fechaVenta, numPedido, vendedor}
+            : s
+          ));
+        } catch(e) { alert("Error al guardar: "+(e.result?.error?.message||String(e))); }
+        finally { setSaving(false); }
+      }, []);
+
+      const handleSorteo = useCallback(() => {
+        setFormError(""); setResult(null); setShowResult(false);
+        if (!caja||!talla) { setFormError("Selecciona el tipo de caja y la talla."); return; }
+        const pool = shirts.filter(s =>
+          s.categoria === caja &&
+          (s.talla||'').trim().toUpperCase() === talla.toUpperCase() &&
+          !s.vendida &&
+          !descartes.some(d => (s.equipo||'').toLowerCase().includes(d.toLowerCase()))
+        );
+        if (!pool.length) { setFormError("No hay camisetas disponibles con esos filtros."); return; }
+        setSpinning(true);
+        setTimeout(() => {
+          // Ponderación por stock: equipos con más unidades tienen más probabilidad
+          // pero suavizado con exponente 0.6 para evitar que dominen siempre
+          const stockPorEquipo = {};
+          pool.forEach(s => {
+            const eqKey = s.equipo || 'UNKNOWN';
+            stockPorEquipo[eqKey] = (stockPorEquipo[eqKey] || 0) + 1;
+          });
+          // Peso = stock ^ 0.6 (proporcional pero suavizado)
+          const pesos = pool.map(s => Math.pow(stockPorEquipo[s.equipo || 'UNKNOWN'], 0.6));
+          const totalPeso = pesos.reduce((a, b) => a + b, 0);
+          // Selección aleatoria ponderada
+          let rand = Math.random() * totalPeso;
+          let picked = pool[pool.length - 1];
+          for (let i = 0; i < pool.length; i++) {
+            rand -= pesos[i];
+            if (rand <= 0) { picked = pool[i]; break; }
+          }
+          setResult(picked);
+          setSpinning(false);
+          setTimeout(() => setShowResult(true), 120);
+        }, 2400);
+      }, [caja,talla,descartes,shirts]);
+
+      const handleConfirmSale = async (precioVenta, numPedido, vendedor) => {
+        if (!result) return;
+        await markSold(result, precioVenta, numPedido, vendedor);
+        setShowModal(false);
+        setResult(null);
+        setShowResult(false);
+        setDescartes([]);
+      };
+
+      const adminShirts = shirts
+        .filter(s => adminFilter==="todas" ? true : adminFilter==="disponibles" ? !s.vendida : s.vendida)
+        .filter(s => adminCaja==="todas" ? true : s.categoria===adminCaja)
+        .filter(s => adminTalla==="todas" ? true : (s.talla||'').trim().toUpperCase()===adminTalla.toUpperCase());
+
+      // ── LOGIN ──
+      if (authStatus !== "ok") return (
+        <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"radial-gradient(ellipse at 50% 0%,#1e293b 0%,#080d18 65%)", flexDirection:"column", gap:24, padding:24, textAlign:"center" }}>
+          <div style={{ fontSize:"4rem" }}>⚽</div>
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"2.6rem", letterSpacing:"0.12em", color:"#f59e0b" }}>CAMISETAS SORPRESA</div>
+          <p style={{ color:"#64748b", maxWidth:380, lineHeight:1.7, fontSize:"0.95rem" }}>Conecta tu cuenta Google para acceder al inventario.</p>
+          {authStatus==="error" && (
+            <div style={{ background:"#f8711818", border:"1px solid #f8711855", borderRadius:12, padding:"14px 20px", color:"#f87178", maxWidth:440, fontSize:"0.85rem" }}>
+              ⚠️ {authError}<br/><span style={{ color:"#64748b", fontSize:"0.8rem" }}>Revisa que el origen está autorizado en Google Cloud.</span>
+            </div>
+          )}
+          <button onClick={initAuth} disabled={authStatus==="loading"} style={{ padding:"14px 44px", borderRadius:12, background:"linear-gradient(135deg,#f59e0b,#d97706)", border:"none", cursor:authStatus==="loading"?"not-allowed":"pointer", color:"#080d18", fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.25rem", letterSpacing:"0.12em", opacity:authStatus==="loading"?.7:1 }}>
+            {authStatus==="loading" ? "⏳ Conectando..." : "🔑 CONECTAR CON GOOGLE"}
+          </button>
+        </div>
+      );
+
+      return (
+        <div style={{ minHeight:"100vh", background:"#080d18" }}>
+
+          {/* MODAL */}
+          {showModal && result && (
+            <ConfirmModal
+              shirt={result}
+              allCajas={allCajas}
+              onConfirm={handleConfirmSale}
+              onCancel={() => setShowModal(false)}
+              saving={saving}
+            />
+          )}
+
+          {/* HEADER */}
+          <header style={{ background:"linear-gradient(90deg,#0a0f1e,#0f172a)", borderBottom:"1px solid #1e293b", padding:"0 24px", height:60, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:100, gap:16 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+              <span style={{ fontSize:"1.5rem" }}>⚽</span>
+              <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.3rem", letterSpacing:"0.12em", color:"#f59e0b" }}>CAMISETAS SORPRESA</span>
+            </div>
+            <div style={{ display:"flex", gap:20, alignItems:"center" }}>
+              {[["TOTAL",total,"#94a3b8"],["DISP.",disp,"#4ade80"],["VEND.",vendidas,"#f87171"]].map(([l,v,c]) => (
+                <div key={l} style={{ textAlign:"center", lineHeight:1 }}>
+                  <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.3rem", color:c }}>{v}</div>
+                  <div style={{ fontSize:"0.58rem", color:"#334155", letterSpacing:"0.1em" }}>{l}</div>
+                </div>
+              ))}
+              <button onClick={fetchSheet} title="Recargar" style={{ background:"#1e293b", border:"1px solid #334155", borderRadius:8, width:34, height:34, cursor:"pointer", color:"#64748b", fontSize:"1.1rem" }}>↺</button>
+            </div>
+            <nav style={{ display:"flex", gap:4, background:"#0a0f1e", padding:4, borderRadius:10 }}>
+              {[["sorteo","🎲 Sorteo"],["admin","📋 Inventario"],["stats","📊 Estadísticas"]].map(([id,label]) => (
+                <button key={id} onClick={() => setTab(id)} style={{ padding:"7px 18px", borderRadius:8, border:"none", cursor:"pointer", fontWeight:600, fontSize:"0.82rem", background:tab===id?"#f59e0b":"transparent", color:tab===id?"#080d18":"#64748b", transition:"all .2s" }}>{label}</button>
+              ))}
+            </nav>
+          </header>
+
+          {loadingSheet && <div style={{ textAlign:"center", padding:"12px", color:"#64748b", fontSize:"0.82rem", background:"#0f172a", borderBottom:"1px solid #1e293b" }}>⏳ Cargando desde Google Sheets...</div>}
+          {sheetError && <div style={{ textAlign:"center", padding:"11px", color:"#f87178", fontSize:"0.83rem", background:"#f8711810", borderBottom:"1px solid #f8711838" }}>⚠️ {sheetError}</div>}
+
+          {/* ── SORTEO ── */}
+          {tab==="sorteo" && (
+            <div style={{ maxWidth:820, margin:"0 auto", padding:"32px 24px", animation:"fadeUp .35s ease" }}>
+
+              {/* 1 - CAJA */}
+              <section style={{ marginBottom:28 }}>
+                <div style={{ fontSize:"0.7rem", fontWeight:600, letterSpacing:"0.2em", textTransform:"uppercase", color:"#f59e0b", marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ background:"#f59e0b", color:"#080d18", borderRadius:"50%", width:20, height:20, display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:"0.7rem", fontWeight:700 }}>1</span>
+                  Tipo de Caja
+                </div>
+                {allCajas.length === 0
+                  ? <p style={{ color:"#334155", fontSize:"0.85rem" }}>Cargando cajas...</p>
+                  : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10 }}>
+                      {allCajas.map(c => {
+                        const col = getCajaColor(c, allCajas);
+                        const avail = shirts.filter(s => s.categoria===c && !s.vendida).length;
+                        return (
+                          <button key={c} onClick={() => setCaja(c)} style={{ padding:"14px 10px", borderRadius:12, border:`2px solid ${caja===c?col:"#1e293b"}`, background:caja===c?`${col}16`:"#0f172a", cursor:"pointer", textAlign:"center", transition:"all .18s", position:"relative" }}>
+                            <div style={{ fontWeight:600, fontSize:"0.82rem", color:caja===c?col:"#94a3b8", marginBottom:4 }}>{c}</div>
+                            <div style={{ fontSize:"0.62rem", color:avail>0?"#4ade80":"#f87171" }}>{avail} disp.</div>
+                            {caja===c && <div style={{ position:"absolute", top:6, right:6, width:7, height:7, borderRadius:"50%", background:col }}/>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                }
+              </section>
+
+              {/* 2 - TALLA */}
+              <section style={{ marginBottom:28 }}>
+                <div style={{ fontSize:"0.7rem", fontWeight:600, letterSpacing:"0.2em", textTransform:"uppercase", color:"#f59e0b", marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ background:"#f59e0b", color:"#080d18", borderRadius:"50%", width:20, height:20, display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:"0.7rem", fontWeight:700 }}>2</span>
+                  Talla
+                  {talla && <span style={{ color:"#334155", fontWeight:400, textTransform:"none", letterSpacing:0, fontSize:"0.7rem" }}>— selecciona una para ver disponibles</span>}
+                </div>
+                <div style={{ fontSize:"0.65rem", color:"#475569", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:8 }}>Adulto</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+                  {TALLAS_ADULTO.map(t => {
+                    const avail = caja ? shirts.filter(s => s.categoria===caja && (s.talla||'').trim().toUpperCase()===t && !s.vendida).length : null;
+                    return (
+                      <button key={t} onClick={() => setTalla(t)} style={{ width:62, height:62, borderRadius:10, border:`2px solid ${talla===t?"#60a5fa":"#1e293b"}`, background:talla===t?"#60a5fa14":"#0f172a", cursor:"pointer", fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", color:talla===t?"#60a5fa":"#64748b", transition:"all .18s", position:"relative" }}>
+                        {t}
+                        {avail!==null && <div style={{ position:"absolute", bottom:3, left:0, right:0, textAlign:"center", color:avail>0?"#4ade80":"#f87171", fontSize:"0.72rem", fontWeight:600 }}>{avail}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize:"0.65rem", color:"#475569", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:8 }}>Infantil 👶</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {TALLAS_NINO.map(t => {
+                    const avail = caja ? shirts.filter(s => s.categoria===caja && (s.talla||'').trim().toUpperCase()===t && !s.vendida).length : null;
+                    return (
+                      <button key={t} onClick={() => setTalla(t)} style={{ width:62, height:62, borderRadius:10, border:`2px solid ${talla===t?"#60a5fa":"#1e293b"}`, background:talla===t?"#60a5fa14":"#0f172a", cursor:"pointer", fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", color:talla===t?"#60a5fa":"#64748b", transition:"all .18s", position:"relative" }}>
+                        {t}
+                        {avail!==null && <div style={{ position:"absolute", bottom:3, left:0, right:0, textAlign:"center", color:avail>0?"#4ade80":"#f87171", fontSize:"0.72rem", fontWeight:600 }}>{avail}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {/* 3 - DESCARTES */}
+              <section style={{ marginBottom:36 }}>
+                <div style={{ fontSize:"0.7rem", fontWeight:600, letterSpacing:"0.2em", textTransform:"uppercase", color:"#f59e0b", marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ background:"#f59e0b", color:"#080d18", borderRadius:"50%", width:20, height:20, display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:"0.7rem", fontWeight:700 }}>3</span>
+                  Equipos Descartados
+                  <span style={{ color:"#334155", fontWeight:400, textTransform:"none", letterSpacing:0, fontSize:"0.7rem" }}>— opcional</span>
+                </div>
+                <div style={{ position:"relative", marginBottom:10 }}>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <input
+                      value={descInput}
+                      onChange={e => setDescInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key==="Enter") {
+                          const v = descInput.trim();
+                          if (v && !descartes.includes(v)) setDescartes(p=>[...p,v]);
+                          setDescInput("");
+                        }
+                        if (e.key==="Escape") setDescInput("");
+                      }}
+                      placeholder="Ej: Sligo, Porto, Utrecht..."
+                      style={{ flex:1, padding:"11px 14px", background:"#0f172a", border:"2px solid #1e293b", borderRadius:10, color:"#e2e8f0", fontSize:"0.9rem" }}
+                      autoComplete="off"
+                    />
+                    <button
+                      onClick={() => { const v=descInput.trim(); if(v&&!descartes.includes(v))setDescartes(p=>[...p,v]); setDescInput(""); }}
+                      style={{ padding:"11px 18px", background:"#1e293b", border:"1px solid #334155", borderRadius:10, color:"#94a3b8", cursor:"pointer", fontWeight:600, fontSize:"0.85rem" }}>
+                      + Añadir
+                    </button>
+                  </div>
+                  {/* SUGERENCIAS */}
+                  {descInput.trim().length >= 2 && (() => {
+                    const q = descInput.trim().toLowerCase();
+                    const sugerencias = [...new Set(
+                      shirts
+                        .map(s => s.equipo)
+                        .filter(eq => eq && eq.trim() && (eq||'').toLowerCase().includes(q) && !descartes.includes(eq))
+                    )].slice(0, 6);
+                    return sugerencias.length > 0 ? (
+                      <div style={{ position:"absolute", top:"100%", left:0, right:60, marginTop:4, background:"#0f172a", border:"1px solid #334155", borderRadius:10, overflow:"hidden", zIndex:50, boxShadow:"0 8px 24px rgba(0,0,0,.5)" }}>
+                        {sugerencias.map(eq => (
+                          <button
+                            key={eq}
+                            onClick={() => { if(!descartes.includes(eq)) setDescartes(p=>[...p,eq]); setDescInput(""); }}
+                            style={{ width:"100%", padding:"10px 14px", background:"none", border:"none", borderBottom:"1px solid #1e293b", cursor:"pointer", textAlign:"left", color:"#e2e8f0", fontSize:"0.88rem", display:"flex", alignItems:"center", gap:8, transition:"background .15s" }}
+                            onMouseEnter={e => e.currentTarget.style.background="#1e293b"}
+                            onMouseLeave={e => e.currentTarget.style.background="none"}
+                          >
+                            <span style={{ color:"#f59e0b", fontSize:"0.8rem" }}>⚽</span>
+                            {/* Highlight matching part */}
+                            {(() => {
+                              const idx = (eq||'').toLowerCase().indexOf(q);
+                              if (idx === -1) return eq;
+                              return (
+                                <span>
+                                  {eq.slice(0, idx)}
+                                  <strong style={{ color:"#f59e0b" }}>{eq.slice(idx, idx+q.length)}</strong>
+                                  {eq.slice(idx+q.length)}
+                                </span>
+                              );
+                            })()}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
+                </div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {descartes.map(d => (
+                    <div key={d} style={{ display:"flex", alignItems:"center", gap:5, background:"#f8711818", border:"1px solid #f8711845", borderRadius:20, padding:"4px 12px", fontSize:"0.82rem", color:"#f87178" }}>
+                      {d}
+                      <button onClick={() => setDescartes(p => p.filter(x=>x!==d))} style={{ background:"none", border:"none", cursor:"pointer", color:"#f87178", fontSize:"1rem", lineHeight:1, padding:0 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* BOTÓN */}
+              <div style={{ textAlign:"center", marginBottom:32 }}>
+                <button onClick={handleSorteo} disabled={spinning||loadingSheet} style={{ padding:"16px 64px", background:spinning?"linear-gradient(90deg,#f59e0b,#fbbf24,#f59e0b)":"linear-gradient(135deg,#f59e0b,#d97706)", backgroundSize:spinning?"300% auto":"auto", animation:spinning?"shimmer 1s linear infinite,glow 1s ease-in-out infinite":"none", border:"none", borderRadius:14, fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.4rem", letterSpacing:"0.14em", color:"#080d18", cursor:(spinning||loadingSheet)?"not-allowed":"pointer" }}>
+                  {spinning ? "🎲 SORTEANDO..." : "🎲 LANZAR SORTEO"}
+                </button>
+              </div>
+
+              {formError && <div style={{ background:"#f8711818", border:"1px solid #f8711850", borderRadius:12, padding:"14px 20px", color:"#f87178", textAlign:"center", fontSize:"0.88rem", marginBottom:24 }}>⚠️ {formError}</div>}
+
+              {/* RESULTADO */}
+              {(spinning||result) && (
+                <div style={{ background:"linear-gradient(135deg,#0f172a,#141d2f)", border:"2px solid #f59e0b40", borderRadius:20, padding:"36px 24px", textAlign:"center", animation:"fadeUp .4s ease", position:"relative", overflow:"hidden" }}>
+                  <div style={{ position:"absolute", inset:0, background:"radial-gradient(ellipse at 50% -10%,#f59e0b18,transparent 65%)", pointerEvents:"none" }}/>
+                  <div style={{ marginBottom:8, opacity:.7 }}><ShirtSVG color="#f59e0b" size={60}/></div>
+                  <div style={{ fontSize:"0.64rem", letterSpacing:"0.2em", textTransform:"uppercase", color:"#475569", marginBottom:8 }}>Camiseta seleccionada</div>
+                  <SlotText spinning={spinning} value={result?.equipo}/>
+                  {!spinning && result && (
+                    <div style={{ display:"flex", justifyContent:"center", margin:"8px 0" }}>
+                      <Escudo url={result.escudo} equipo={result.equipo} size={64}/>
+                    </div>
+                  )}
+                  {showResult && result && (
+                    <div style={{ animation:"fadeUp .3s ease" }}>
+                      <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", margin:"14px 0 28px" }}>
+                        <Badge txt={result.talla} color="#60a5fa"/>
+                        <Badge txt={result.caja} color={getCajaColor(result.categoria,allCajas)}/>
+                        <Badge txt={result.liga} color="#a78bfa"/>
+                        <Badge txt={result.temp} color="#94a3b8"/>
+                        <Badge txt={result.marca} color="#34d399"/>
+                        <Badge txt={result.colores} color="#f472b6"/>
+                        {result.pvp && <Badge txt={"€"+result.pvp} color="#fde68a"/>}
+                      </div>
+                      <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
+                        <button onClick={() => setShowModal(true)} style={{ padding:"12px 32px", background:"linear-gradient(135deg,#4ade80,#22c55e)", border:"none", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:"0.95rem", color:"#080d18" }}>
+                          ✅ Confirmar venta
+                        </button>
+                        <button onClick={() => { setResult(null); setShowResult(false); }} style={{ padding:"12px 28px", background:"transparent", border:"2px solid #1e293b", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:"0.95rem", color:"#64748b" }}>
+                          ↩ Repetir
+                        </button>
+                        <button onClick={() => { setResult(null); setShowResult(false); setSpinning(false); setDescartes([]); }} style={{ padding:"12px 28px", background:"transparent", border:"2px solid #f8711840", borderRadius:10, cursor:"pointer", fontWeight:600, fontSize:"0.95rem", color:"#f87178" }}>
+                          ✕ Cancelar sorteo
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── INVENTARIO ── */}
+          {tab==="admin" && (
+            <div style={{ maxWidth:1100, margin:"0 auto", padding:"32px 24px", animation:"fadeUp .35s ease" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:12 }}>
+                <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.7rem", letterSpacing:"0.08em" }}>Inventario</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                  {[["todas","Todas"],["disponibles","Disponibles"],["vendidas","Vendidas"]].map(([id,label]) => (
+                    <button key={id} onClick={() => setAdminFilter(id)} style={{ padding:"7px 14px", borderRadius:8, border:"none", cursor:"pointer", fontWeight:600, fontSize:"0.8rem", background:adminFilter===id?"#f59e0b":"#1e293b", color:adminFilter===id?"#080d18":"#64748b", transition:"all .2s" }}>{label}</button>
+                  ))}
+                  <select value={adminCaja} onChange={e => setAdminCaja(e.target.value)} style={{ padding:"7px 14px", borderRadius:8, background:"#1e293b", border:"1px solid #334155", color:"#94a3b8", fontSize:"0.8rem", cursor:"pointer" }}>
+                    <option value="todas">Todas las cajas</option>
+                    {allCajas.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <select value={adminTalla} onChange={e => setAdminTalla(e.target.value)} style={{ padding:"7px 14px", borderRadius:8, background:"#1e293b", border:"1px solid #334155", color:"#94a3b8", fontSize:"0.8rem", cursor:"pointer" }}>
+                    <option value="todas">Todas las tallas</option>
+                    {["S","M","L","XL","XXL","3XL","4XL","116","128","140","152","164"].map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <span style={{ color:"#475569", fontSize:"0.8rem" }}>{adminShirts.length} resultados</span>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))", gap:10 }}>
+                {adminShirts.map(s => {
+                  const col = getCajaColor(s.categoria, allCajas);
+                  return (
+                    <div key={s.rowIndex} style={{ background:"#0f172a", border:`1px solid ${s.vendida?"#1e293b":`${col}30`}`, borderRadius:12, padding:"14px 16px", opacity:s.vendida?.45:1, transition:"opacity .2s", position:"relative" }}>
+                      {s.vendida && (
+                        <div style={{ position:"absolute", top:8, right:8, background:"#f8711825", border:"1px solid #f8711855", borderRadius:6, padding:"1px 7px", fontSize:"0.58rem", color:"#f87178", fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase" }}>Vendida</div>
+                      )}
+                      <div style={{ fontSize:"0.6rem", color:col, letterSpacing:"0.1em", textTransform:"uppercase", fontWeight:600, marginBottom:4 }}>{s.categoria}</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                        <Escudo url={s.escudo} equipo={s.equipo} size={28}/>
+                        <div style={{ fontWeight:600, fontSize:"0.95rem", color:"#e2e8f0" }}>{s.equipo}</div>
+                      </div>
+                      <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:8 }}>
+                        <Badge txt={s.talla} color="#60a5fa"/>
+                        <Badge txt={s.eq} color="#38bdf8"/>
+                        <Badge txt={s.temp} color="#94a3b8"/>
+                        <Badge txt={s.marca} color="#34d399"/>
+                        <Badge txt={s.liga} color="#a78bfa"/>
+                        {s.colores && <Badge txt={s.colores} color="#f472b6"/>}
+                      </div>
+                      {s.caja && (
+                        <div style={{ display:"flex", alignItems:"center", gap:6, background:"#080d18", borderRadius:8, padding:"6px 10px", marginBottom:8 }}>
+                          <span style={{ fontSize:"0.8rem" }}>📦</span>
+                          <span style={{ fontSize:"0.72rem", color:"#f59e0b", fontWeight:600 }}>{s.caja}</span>
+                        </div>
+                      )}
+                      {s.vendida && s.vendedor && (
+                        <div style={{ marginTop:8, paddingTop:8, borderTop:"1px solid #1e293b", fontSize:"0.72rem", color:"#475569", display:"flex", flexDirection:"column", gap:2 }}>
+                          {s.vendedor && <span>👤 {s.vendedor}</span>}
+                          {s.fechaVenta && <span>📅 {s.fechaVenta}</span>}
+                          {s.numPedido && <span>📦 {s.numPedido}</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {adminShirts.length===0 && <div style={{ textAlign:"center", color:"#334155", padding:"60px 0", fontSize:"0.9rem" }}>No hay camisetas con esos filtros.</div>}
+            </div>
+          )}
+
+          {/* ── ESTADÍSTICAS TAB ── */}
+          {tab === "stats" && <StatsTab shirts={shirts} allCajas={allCajas}/>}
+
+                    <div style={{ textAlign:"center", padding:"24px", color:"#1e293b", fontSize:"0.7rem" }}>
+            Google Sheets · {SHEET_ID.slice(0,16)}…
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
